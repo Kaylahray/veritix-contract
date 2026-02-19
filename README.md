@@ -1,196 +1,124 @@
-# Veritix Contracts
+# Veritix Pay
 
-On-chain payment infrastructure for the Veritix ticketing platform, built with **Rust** and **Soroban** (Stellar's smart contract platform).
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![Built With Rust](https://img.shields.io/badge/Built%20With-Rust-orange.svg)
+![Network: Stellar / Soroban](https://img.shields.io/badge/Network-Stellar%20%2F%20Soroban-7b5ea7.svg)
+![Status: In Development](https://img.shields.io/badge/Status-In%20Development-yellow.svg)
 
-This repository implements a token contract with advanced payment primitives — escrow, recurring payments, payment splitting, and dispute resolution — designed to power trustless financial operations on the Stellar network.
-
----
-
-## What's in this repo
-
-This is a single Soroban smart contract package located at `veritixpay/contract/token/`. It contains:
-
-| Module | File | Description |
-|--------|------|-------------|
-| Token core | `contract.rs` | Standard token — mint, burn, transfer, approve |
-| Admin | `admin.rs` | Administrator address management |
-| Balances | `balance.rs` | Persistent account balance tracking |
-| Allowances | `allowance.rs` | Delegated spending with ledger-based expiration |
-| Metadata | `metadata.rs` | Token name, symbol, and decimals |
-| Storage | `storage_types.rs` | Shared data structures and storage key definitions |
-| Escrow | `escrow.rs` | Conditional fund holding and release |
-| Recurring payments | `recurring.rs` | Automated periodic payment scheduling |
-| Payment splitting | `splitter.rs` | Distribute a payment among multiple recipients |
-| Dispute resolution | `dispute.rs` | Third-party arbitration for contested payments |
-| Tests | `test.rs` | Unit tests for the token core |
+On-chain payment infrastructure for the Veritix ticketing platform, built with Rust and Soroban on the Stellar network.
 
 ---
 
-## Repository layout
+## Overview
 
-```
-veritix-contract/
-├── veritixpay/
-│   ├── Cargo.toml              # Workspace config (soroban-sdk 20.5.0)
-│   └── contract/
-│       └── token/
-│           ├── Cargo.toml      # Package: veritix-token
-│           ├── Makefile        # build / test / fmt shortcuts
-│           └── src/
-│               ├── lib.rs
-│               ├── contract.rs
-│               ├── admin.rs
-│               ├── allowance.rs
-│               ├── balance.rs
-│               ├── metadata.rs
-│               ├── storage_types.rs
-│               ├── escrow.rs
-│               ├── recurring.rs
-│               ├── splitter.rs
-│               ├── dispute.rs
-│               └── test.rs
-├── .gitignore
-├── CONTRIBUTING.md
-└── README.md
-```
+Veritix Pay is the payment layer of a blockchain-based ticketing system. It lives entirely on-chain as a Soroban smart contract and handles all financial operations that power the Veritix platform — from a fan buying a ticket to an organizer receiving settlement funds after an event.
+
+The contract handles **token transfers**, **escrow for ticket purchases**, **recurring payments**, **payment splitting between organizers, artists, and venues**, and **dispute resolution** when something goes wrong. Each of these is designed as a focused, composable module that shares a common storage layout and authorization model.
+
+This project is currently being built in the open. The contract source files have been cleared and contributors can claim open GitHub Issues to build individual modules from scratch. If you want to contribute to a real Soroban project, this is a great place to start — see the [Contributing](#contributing) section below.
 
 ---
 
 ## Why Stellar & Soroban
 
-- Deterministic execution and predictable fees
-- Fast finality suitable for real-time ticket validation
-- Rust's safety guarantees at the contract level
-- Native integration with the Stellar ecosystem
+- **Deterministic execution and predictable fees** — no gas spikes or unpredictable costs
+- **Fast finality** — Stellar's 5-second finality is suitable for real-time ticket validation and payment confirmation
+- **Rust-based safety guarantees** — Soroban contracts are written in Rust, giving strong compile-time correctness checks
+- **Native Stellar ecosystem integration** — works directly with Stellar assets and accounts, no bridges required
 
 ---
 
-## Payment modules
+## Contract Modules (Planned)
 
-### Escrow (`escrow.rs`)
-Holds funds in the contract until a condition is met. Sender can trigger a refund; receiver gets funds only when the condition passes.
+These modules will be built by contributors picking up open issues. The entry point is `src/lib.rs`.
 
-```
-create(sender, receiver, amount, condition, token) → escrow_id
-release(escrow_id, token)   // condition must be true
-refund(escrow_id, token)    // sender reclaims funds
-```
-
-### Recurring payments (`recurring.rs`)
-Schedule periodic transfers between two parties. First payment executes immediately at setup; subsequent payments are gated by ledger-based interval checks.
-
-```
-setup(payer, payee, amount, interval, iterations, token) → payment_id
-execute(payment_id)
-```
-
-### Payment splitting (`splitter.rs`)
-Split a single payment across multiple recipients by percentage. Percentages must sum to 100.
-
-```
-create_split(payer, recipients, total_amount, token) → split_id
-distribute(split_id)
-```
-
-### Dispute resolution (`dispute.rs`)
-Open a dispute on a payment and assign a third-party resolver. The resolver's decision determines who receives the funds.
-
-```
-open_dispute(payment_id, initiator, respondent, reason, amount, token) → dispute_id
-resolve_dispute(dispute_id, resolver, decision)
-  // decision=true  → funds returned to initiator
-  // decision=false → funds sent to respondent
-```
+| Module | File | Status | Description |
+|--------|------|--------|-------------|
+| Token Core | `contract.rs` | 🔜 Open | Mint, burn, transfer, approve |
+| Escrow | `escrow.rs` | 🔜 Open | Create, release, and refund escrow holds |
+| Recurring Payments | `recurring.rs` | 🔜 Open | Set up and execute recurring charges |
+| Payment Splitter | `splitter.rs` | 🔜 Open | Split a payment between multiple parties |
+| Dispute Resolution | `dispute.rs` | 🔜 Open | Open and resolve payment disputes |
+| Admin | `admin.rs` | 🔜 Open | Admin address controls |
+| Storage Types | `storage_types.rs` | 🔜 Open | Shared `DataKey` enum and struct definitions |
+| Tests | `test.rs` | 🔜 Open | Unit test suite |
 
 ---
 
-## Getting started
+## Getting Started
 
-### Requirements
+### Prerequisites
 
-- [Rust](https://rustup.rs/) (stable, with `wasm32-unknown-unknown` target)
-- [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/install-stellar-cli)
+| Tool | Notes | Install |
+|------|-------|---------|
+| Rust (stable) | Required to compile Soroban contracts | https://rustup.rs |
+| wasm32 target | Required build target | `rustup target add wasm32-unknown-unknown` |
+| Stellar CLI (latest) | For building and deploying | `cargo install stellar-cli` |
+
+Verify your setup:
 
 ```bash
-# Install Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Add the WASM target
-rustup target add wasm32-unknown-unknown
-
-# Install Stellar CLI
-cargo install stellar-cli
+rustc --version
+stellar --version
 ```
 
-### Build
+### Clone and Build
 
 ```bash
-cd veritixpay/contract/token
-make build
-# or: stellar contract build
-```
+git clone https://github.com/Lead-Studios/veritix-contract.git
+cd veritix-contract/veritixpay/contract/token
 
-### Test
-
-```bash
-make test
-# or: cargo test
-```
-
-### Format
-
-```bash
-make fmt
+make build    # compile to WASM
+make test     # run tests
+make fmt      # format code
+make clean    # remove build artifacts
 ```
 
 ---
 
-## Deploying to Stellar testnet
+## Project Structure
 
-```bash
-stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/veritix_token.wasm \
-  --network testnet \
-  --source <YOUR_SECRET_KEY>
+The repository is in a clean-slate state. Only `lib.rs` exists in `src/` — contributors will build out the modules by picking up issues.
+
 ```
-
----
-
-## Storage design
-
-Soroban storage is key-value. This contract uses three tiers:
-
-| Tier | Used for | TTL |
-|------|----------|-----|
-| Instance | Admin, token metadata | 7 days (auto-bumped) |
-| Persistent | Balances, escrows, payments | 30 days (auto-bumped) |
-| Temporary | Allowances (with ledger expiry) | Per allowance expiration |
-
-All TTLs are bumped on access to keep live data from expiring.
-
----
-
-## Security notes
-
-- Every mutable operation calls `require_auth()` on the relevant signer
-- Amounts are validated as non-negative on all entry points
-- Escrow, recurring, and split records use a `released` / `distributed` flag to prevent double execution
-- Decimals are capped at 18
-
-This contract has not been audited. Do not deploy to mainnet without a full audit.
-
----
-
-## Related repositories
-
-- **Backend:** https://github.com/Lead-Studios/veritix-backend
-- **Web client:** https://github.com/Lead-Studios/veritix-web
+veritixpay/
+├── contract/
+│   └── token/
+│       ├── src/
+│       │   └── lib.rs          # Entry point — start here
+│       ├── Cargo.toml
+│       └── Makefile
+├── Cargo.toml
+├── Cargo.lock
+├── .gitignore
+└── README.md
+```
 
 ---
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions are welcome and actively encouraged. This project is structured so that each contract module is an independent issue that any contributor can pick up.
+
+To get started:
+1. Browse [open issues](https://github.com/Lead-Studios/veritix-contract/issues)
+2. Comment on one to get assigned
+3. Branch from `main`, build your module, write tests, and open a PR
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide — including project structure, how to add a module, storage conventions, authorization rules, and the PR checklist.
+
+---
+
+## Open Source Wave
+
+This project is part of an active open-source funding wave on [Drips Network](https://www.drips.network/). Contributors who build meaningful features may be eligible for rewards. Build something real, on a real chain, with real incentives.
+
+---
+
+## Related Repositories
+
+- **Backend:** https://github.com/Lead-Studios/veritix-backend
+- **Web client:** https://github.com/Lead-Studios/veritix-web
 
 ---
 

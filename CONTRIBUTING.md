@@ -1,16 +1,34 @@
 # Contributing to Veritix Contracts
 
-This is an open source project and contributions are welcome. This guide explains how to get the code running locally, how the codebase is structured, and what to keep in mind when submitting changes.
+Welcome, and thank you for your interest in contributing! Veritix Contracts is an open-source Soroban smart contract project and we are actively looking for contributors to help build it out. This project is part of an active open-source funding wave on [Drips Network](https://www.drips.network/) — contributors who ship meaningful features are part of something real.
+
+Whether you are new to Soroban or an experienced Rust developer, there is a place for you here. Read through this guide, pick up an issue, and start building.
+
+---
+
+## What is Veritix Pay?
+
+Veritix Pay is the on-chain payment module for the Veritix ticketing platform. It is built in **Rust** using **Soroban**, Stellar's smart contract platform, and deployed on the **Stellar network**.
+
+It is responsible for:
+
+- **On-chain payments** — token transfers between parties
+- **Escrow** — hold funds until a condition is met, then release or refund
+- **Recurring payments** — schedule periodic charges between a payer and payee
+- **Payment splitting** — distribute a single payment across multiple recipients
+- **Dispute resolution** — allow a third-party resolver to adjudicate contested payments
+
+The contract source files have been cleared. You, as a contributor, will be building these modules from scratch by picking up open GitHub Issues.
 
 ---
 
 ## Prerequisites
 
-| Tool | Version | Install |
-|------|---------|---------|
-| Rust (stable) | latest stable | https://rustup.rs |
-| wasm32 target | — | `rustup target add wasm32-unknown-unknown` |
-| Stellar CLI | latest | `cargo install stellar-cli` |
+| Tool | Notes | Install |
+|------|-------|---------|
+| Rust (stable) | Required to compile Soroban contracts | https://rustup.rs |
+| wasm32 target | Required build target for Soroban | `rustup target add wasm32-unknown-unknown` |
+| Stellar CLI (latest) | For building and deploying contracts | `cargo install stellar-cli` |
 
 Verify your setup:
 
@@ -21,7 +39,7 @@ stellar --version
 
 ---
 
-## Getting the code
+## Getting the Code
 
 ```bash
 git clone https://github.com/Lead-Studios/veritix-contract.git
@@ -30,76 +48,96 @@ cd veritix-contract/veritixpay/contract/token
 
 ---
 
-## Building and testing
+## Project Structure
 
-All commands are available via the `Makefile` inside `veritixpay/contract/token/`:
+The repository is currently in a clean-slate state. Only `lib.rs` exists in `src/` — everything else will be built by contributors picking up issues.
 
-```bash
-make build   # compiles to WASM
-make test    # runs the full test suite
-make fmt     # formats Rust code with rustfmt
-make clean   # removes build artifacts
+```
+veritixpay/
+├── contract/
+│   └── token/
+│       ├── src/
+│       │   └── lib.rs          # Entry point — start here
+│       ├── Cargo.toml
+│       └── Makefile
+├── Cargo.toml
+├── Cargo.lock
+├── .gitignore
+└── README.md
 ```
 
-You can also use Cargo directly:
-
-```bash
-cargo test
-cargo build --target wasm32-unknown-unknown --release
-```
-
-**All tests must pass before submitting a pull request.**
+Each module (escrow, splitter, dispute, etc.) will live as its own `.rs` file inside `src/` and be declared in `lib.rs`. You will be building these out one issue at a time.
 
 ---
 
-## Project structure
+## How to Pick Up an Issue
 
-The contract lives entirely in `veritixpay/contract/token/src/`. Each file is a focused module:
+1. Browse [open issues](https://github.com/Lead-Studios/veritix-contract/issues) on GitHub
+2. Find one labeled and comment **"I'd like to work on this"** to get assigned
+3. Branch from `main`:
+   ```bash
+   git checkout -b feat/your-feature
+   ```
+4. Build your module, write tests, and open a PR against `main`
+5. Fill in the PR description explaining what you built and why
 
-```
-src/
-├── lib.rs            # Module declarations and public exports
-├── contract.rs       # Main token interface (mint, burn, transfer, approve)
-├── admin.rs          # Admin address read/write helpers
-├── allowance.rs      # Allowance logic with ledger-based expiration
-├── balance.rs        # Persistent balance management
-├── metadata.rs       # Token name, symbol, decimals
-├── storage_types.rs  # All DataKey variants and shared structs
-├── escrow.rs         # Escrow: create / release / refund
-├── recurring.rs      # Recurring payments: setup / execute
-├── splitter.rs       # Payment splitting: create_split / distribute
-├── dispute.rs        # Dispute resolution: open / resolve
-└── test.rs           # Unit tests (token core)
-```
-
-A new feature should live in its own module file and be declared in `lib.rs`.
+If you have an idea not covered by an existing issue, open one first and describe what you want to build before starting work.
 
 ---
 
-## How to add a new module
+## How to Add a New Module
 
 1. Create `src/your_module.rs`
 2. Add `pub mod your_module;` to `src/lib.rs`
-3. Add any new `DataKey` variants to `storage_types.rs`
-4. Write tests — either in a `#[cfg(test)]` block inside your module, or add cases to `test.rs`
-5. Run `make test` and `make fmt`
+3. Add any new `DataKey` variants to `storage_types.rs` (create the file if it does not exist yet)
+4. Write tests in a `#[cfg(test)]` block inside your module, or in a dedicated `test.rs`
+5. Run `make test` to confirm everything passes
+6. Run `make fmt` to format the code
 
 ---
 
-## Writing tests
+## Building and Testing
 
-Tests use the Soroban test environment. Look at `test.rs` for examples of how to:
+All commands run from inside `veritixpay/contract/token/`:
 
-- Create a test environment with `Env::default()`
-- Register and call the contract via `TokenClient`
-- Mock authorization with `mock_all_auths()`
+```bash
+make build    # compile the contract to WASM
+make test     # run the full test suite
+make fmt      # format all Rust code with rustfmt
+make clean    # remove build artifacts
+```
+
+All tests must pass and `make fmt` must produce no diffs before a PR can be merged.
+
+---
+
+## Writing Tests
+
+Tests use the Soroban test environment. The key patterns are:
+
+- Use `Env::default()` to create an isolated test environment
+- Register the contract with `env.register_contract()`
+- Mock authorization with `env.mock_all_auths()` so you do not need real signers in tests
+
+Boilerplate example:
 
 ```rust
-#[test]
-fn test_your_feature() {
-    let env = Env::default();
-    env.mock_all_auths();
-    // ... register contract, call functions, assert state
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    #[test]
+    fn test_your_feature() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, YourContract);
+        let client = YourContractClient::new(&env, &contract_id);
+
+        let user = Address::generate(&env);
+        // call client methods and assert expected state
+    }
 }
 ```
 
@@ -111,52 +149,68 @@ cargo test your_feature
 
 ---
 
-## Storage conventions
+## Storage Conventions
 
-- Use `DataKey` variants from `storage_types.rs` — don't invent inline storage keys
-- Persist records with `env.storage().persistent()` and bump TTL using `BALANCE_BUMP_AMOUNT`
-- Use `env.storage().instance()` for contract-wide config (admin, metadata)
-- Every new record type that needs a counter follows the `*Count` / `*(u32)` pattern already used by `EscrowCount`/`Escrow(u32)`
+Soroban uses a key-value store. Follow these conventions:
 
----
-
-## Authorization
-
-Every function that mutates state on behalf of a user must call `address.require_auth()` (or `require_auth_for_args`) before touching storage. Do not skip this.
+- Define all storage keys as variants of the `DataKey` enum in `storage_types.rs` — do not invent inline keys
+- Use `env.storage().persistent()` for user records (balances, escrows, payments) and bump TTL on access
+- Use `env.storage().instance()` for contract-wide config (admin address, token metadata)
+- For collections (e.g. escrows), use a count key (`EscrowCount`) paired with an indexed key (`Escrow(u32)`)
 
 ---
 
-## Pull request checklist
+## Authorization Rules
+
+Every function that mutates state on behalf of a user **must** call `address.require_auth()` (or `require_auth_for_args`) before touching storage.
+
+```rust
+sender.require_auth();
+// only then: read/write storage
+```
+
+Never skip or defer authorization. PRs that mutate state without `require_auth()` will not be merged.
+
+---
+
+## Pull Request Checklist
+
+Before marking your PR ready for review, confirm all of the following:
 
 - [ ] `make test` passes with no failures
 - [ ] `make fmt` has been run (no formatting diffs)
 - [ ] New logic has at least one test covering the happy path
-- [ ] Error/panic paths are tested where practical
-- [ ] No new `unwrap()` calls on external/untrusted data
-- [ ] `storage_types.rs` updated if you added new storage keys or structs
-- [ ] `lib.rs` updated if you added a new module
+- [ ] Error and edge cases are tested where practical
+- [ ] No new `unwrap()` calls on untrusted or external data
+- [ ] `storage_types.rs` updated if new storage keys were added
+- [ ] `lib.rs` updated if a new module was added
 - [ ] PR description explains what the change does and why
 
 ---
 
-## Branching
+## Branching Strategy
 
-- `main` is the stable branch
-- Branch from `main` for your work: `git checkout -b feat/your-feature`
-- Open your PR against `main`
+- `main` is the stable branch — do not push directly
+- Branch naming conventions:
+  - `feat/` — new features or modules
+  - `fix/` — bug fixes
+  - `docs/` — documentation only
+  - `chore/` — maintenance, tooling, config
+- All PRs go against `main`
 
 ---
 
-## Reporting issues
+## Reporting Issues
 
-Open an issue on GitHub describing:
+When opening a bug report or unexpected-behavior issue, include:
+
 - What you expected to happen
 - What actually happened
 - Steps to reproduce
-- Rust and Stellar CLI versions (`rustc --version`, `stellar --version`)
+- Your Rust version (`rustc --version`) and Stellar CLI version (`stellar --version`)
 
 ---
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing, you agree that your contributions will be licensed under the **MIT License**.

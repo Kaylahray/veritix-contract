@@ -1,1 +1,0 @@
-# Veritix Pay — Coming Soon
