@@ -1,15 +1,2 @@
-#![no_std]
-
-mod admin;
-mod allowance;
-mod balance;
-mod contract;
-mod metadata;
-mod storage_types;
-mod test;
-pub mod escrow;
-pub mod recurring;
-pub mod splitter;
-pub mod dispute;
-
-pub use crate::contract::TokenClient;
+// Veritix Pay — Smart contract logic coming soon.
+// Contributors: see CONTRIBUTING.md for how to get started.
