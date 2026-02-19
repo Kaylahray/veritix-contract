@@ -1,178 +1,199 @@
-
-```md
 # Veritix Contracts
 
-Veritix Contracts contains the **on-chain logic** for the Veritix ticketing platform, built using **Rust** and **Soroban**, Stellar’s smart contract platform.
+On-chain payment infrastructure for the Veritix ticketing platform, built with **Rust** and **Soroban** (Stellar's smart contract platform).
 
-These contracts define the core rules that govern ticket issuance, ownership, transfers, validation, and settlement, ensuring that critical ticketing operations are **transparent, tamper-resistant, and verifiable on the Stellar network**.
+This repository implements a token contract with advanced payment primitives — escrow, recurring payments, payment splitting, and dispute resolution — designed to power trustless financial operations on the Stellar network.
 
 ---
 
-## Overview
+## What's in this repo
 
-Veritix is a blockchain-powered ticketing system designed to prevent fraud, double spending, and unauthorized resale while giving event organizers full control over ticket rules.
+This is a single Soroban smart contract package located at `veritixpay/contract/token/`. It contains:
 
-This repository focuses exclusively on **on-chain concerns**, while the backend and frontend handle orchestration, UI, and off-chain data.
+| Module | File | Description |
+|--------|------|-------------|
+| Token core | `contract.rs` | Standard token — mint, burn, transfer, approve |
+| Admin | `admin.rs` | Administrator address management |
+| Balances | `balance.rs` | Persistent account balance tracking |
+| Allowances | `allowance.rs` | Delegated spending with ledger-based expiration |
+| Metadata | `metadata.rs` | Token name, symbol, and decimals |
+| Storage | `storage_types.rs` | Shared data structures and storage key definitions |
+| Escrow | `escrow.rs` | Conditional fund holding and release |
+| Recurring payments | `recurring.rs` | Automated periodic payment scheduling |
+| Payment splitting | `splitter.rs` | Distribute a payment among multiple recipients |
+| Dispute resolution | `dispute.rs` | Third-party arbitration for contested payments |
+| Tests | `test.rs` | Unit tests for the token core |
 
-The contracts are responsible for:
-- Enforcing ticket ownership rules
-- Validating transfers and resale conditions
-- Anchoring ticket lifecycle events on Stellar
-- Providing a verifiable source of truth for ticket state
+---
+
+## Repository layout
+
+```
+veritix-contract/
+├── veritixpay/
+│   ├── Cargo.toml              # Workspace config (soroban-sdk 20.5.0)
+│   └── contract/
+│       └── token/
+│           ├── Cargo.toml      # Package: veritix-token
+│           ├── Makefile        # build / test / fmt shortcuts
+│           └── src/
+│               ├── lib.rs
+│               ├── contract.rs
+│               ├── admin.rs
+│               ├── allowance.rs
+│               ├── balance.rs
+│               ├── metadata.rs
+│               ├── storage_types.rs
+│               ├── escrow.rs
+│               ├── recurring.rs
+│               ├── splitter.rs
+│               ├── dispute.rs
+│               └── test.rs
+├── .gitignore
+├── CONTRIBUTING.md
+└── README.md
+```
 
 ---
 
 ## Why Stellar & Soroban
 
-Stellar is a decentralized network optimized for real-world applications that require speed, low cost, and security.  
-Soroban is Stellar’s smart contract platform, designed with safety and performance in mind.
-
-Key reasons Veritix uses Stellar and Soroban:
 - Deterministic execution and predictable fees
 - Fast finality suitable for real-time ticket validation
-- Strong Rust-based safety guarantees
+- Rust's safety guarantees at the contract level
 - Native integration with the Stellar ecosystem
-- Designed for production-grade financial and utility applications
 
 ---
 
-## Core On-Chain Features
+## Payment modules
 
-### Ticket Issuance
-- Register new tickets on-chain
-- Bind tickets to event identifiers
-- Associate tickets with an owner address
+### Escrow (`escrow.rs`)
+Holds funds in the contract until a condition is met. Sender can trigger a refund; receiver gets funds only when the condition passes.
 
-### Ownership & Transfers
-- Enforce ownership checks for all actions
-- Controlled ticket transfers
-- Optional transfer limits or lock periods
-- Organizer-defined resale rules
+```
+create(sender, receiver, amount, condition, token) → escrow_id
+release(escrow_id, token)   // condition must be true
+refund(escrow_id, token)    // sender reclaims funds
+```
 
-### Ticket Validation
-- Verify ticket authenticity
-- Prevent double usage
-- Mark tickets as used or invalid after entry
+### Recurring payments (`recurring.rs`)
+Schedule periodic transfers between two parties. First payment executes immediately at setup; subsequent payments are gated by ledger-based interval checks.
 
-### Event Anchoring
-- Anchor critical event actions on Stellar
-- Maintain an immutable audit trail
-- Enable independent verification by third parties
+```
+setup(payer, payee, amount, interval, iterations, token) → payment_id
+execute(payment_id)
+```
 
-### Organizer Controls
-- Define ticket policies at creation
-- Enable or disable transfers
-- Enforce event-specific rules
+### Payment splitting (`splitter.rs`)
+Split a single payment across multiple recipients by percentage. Percentages must sum to 100.
 
----
+```
+create_split(payer, recipients, total_amount, token) → split_id
+distribute(split_id)
+```
 
-## Repository Structure
+### Dispute resolution (`dispute.rs`)
+Open a dispute on a payment and assign a third-party resolver. The resolver's decision determines who receives the funds.
 
-
-veritix-contract/
-├── contracts/
-│   ├── ticket/
-│   │   ├── lib.rs
-│   │   └── types.rs
-│   ├── event/
-│   │   ├── lib.rs
-│   │   └── types.rs
-├── tests/
-│   └── contract_tests.rs
-├── Cargo.toml
-├── Cargo.lock
-└── README.md
+```
+open_dispute(payment_id, initiator, respondent, reason, amount, token) → dispute_id
+resolve_dispute(dispute_id, resolver, decision)
+  // decision=true  → funds returned to initiator
+  // decision=false → funds sent to respondent
+```
 
 ---
 
-## Development Setup
+## Getting started
 
 ### Requirements
-- Rust (stable)
-- Soroban CLI
-- Stellar testnet access
 
-Install Rust:
+- [Rust](https://rustup.rs/) (stable, with `wasm32-unknown-unknown` target)
+- [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/install-stellar-cli)
+
 ```bash
+# Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-````
 
-Install Soroban CLI:
+# Add the WASM target
+rustup target add wasm32-unknown-unknown
+
+# Install Stellar CLI
+cargo install stellar-cli
+```
+
+### Build
 
 ```bash
-cargo install soroban-cli
+cd veritixpay/contract/token
+make build
+# or: stellar contract build
+```
+
+### Test
+
+```bash
+make test
+# or: cargo test
+```
+
+### Format
+
+```bash
+make fmt
 ```
 
 ---
 
-## Build Contracts
+## Deploying to Stellar testnet
 
 ```bash
-cargo build --target wasm32-unknown-unknown --release
-```
-
----
-
-## Deploying to Stellar (Testnet)
-
-```bash
-soroban contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/veritix_contract.wasm \
+stellar contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/veritix_token.wasm \
   --network testnet \
-  --source <SECRET_KEY>
+  --source <YOUR_SECRET_KEY>
 ```
 
 ---
 
-## Interaction Model
+## Storage design
 
-The Veritix backend communicates with these contracts to:
+Soroban storage is key-value. This contract uses three tiers:
 
-* Register tickets
-* Query ownership and validity
-* Validate tickets during entry
-* Anchor ticket lifecycle events
+| Tier | Used for | TTL |
+|------|----------|-----|
+| Instance | Admin, token metadata | 7 days (auto-bumped) |
+| Persistent | Balances, escrows, payments | 30 days (auto-bumped) |
+| Temporary | Allowances (with ledger expiry) | Per allowance expiration |
 
-All user-facing interactions are mediated by the backend, while the contracts enforce **final authority and trust guarantees**.
-
----
-
-## Security Considerations
-
-* Contracts are written with minimal mutable state
-* All state transitions are explicit and validated
-* Ownership checks are enforced at the contract level
-* Designed to minimize attack surface and undefined behavior
-
-Before mainnet deployment:
-
-* Perform full contract audits
-* Stress test transfer and validation paths
-* Validate failure modes and edge cases
+All TTLs are bumped on access to keep live data from expiring.
 
 ---
 
-## Relationship to Other Repositories
+## Security notes
 
-* **Backend:** [https://github.com/Lead-Studios/veritix-backend](https://github.com/Lead-Studios/veritix-backend)
-* **Web Client:** [https://github.com/Lead-Studios/veritix-web](https://github.com/Lead-Studios/veritix-web)
+- Every mutable operation calls `require_auth()` on the relevant signer
+- Amounts are validated as non-negative on all entry points
+- Escrow, recurring, and split records use a `released` / `distributed` flag to prevent double execution
+- Decimals are capped at 18
 
-This repository contains only on-chain logic. Business logic, APIs, and UI live in their respective repositories.
+This contract has not been audited. Do not deploy to mainnet without a full audit.
+
+---
+
+## Related repositories
+
+- **Backend:** https://github.com/Lead-Studios/veritix-backend
+- **Web client:** https://github.com/Lead-Studios/veritix-web
 
 ---
 
 ## Contributing
 
-Contributions are welcome.
-
-When contributing:
-
-* Follow existing Rust and Soroban conventions
-* Write tests for all new logic
-* Avoid introducing unnecessary state or complexity
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
 ## License
 
-MIT License
+MIT
