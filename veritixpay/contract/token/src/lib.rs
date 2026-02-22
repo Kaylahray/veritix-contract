@@ -8,3 +8,10 @@ pub mod admin;
 pub mod metadata;
 pub mod allowance;
 pub mod balance;
+
+mod contract;
+
+#[cfg(test)]
+mod test;
+
+pub use crate::contract::VeritixToken;
