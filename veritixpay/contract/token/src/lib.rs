@@ -7,3 +7,4 @@ pub mod storage_types;
 pub mod admin;
 pub mod metadata;
 pub mod allowance;
+pub mod balance;
