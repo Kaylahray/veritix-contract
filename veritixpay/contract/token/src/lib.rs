@@ -7,3 +7,10 @@ pub mod storage_types;
 pub mod admin;
 pub mod metadata;
 pub mod allowance;
+
+mod contract;
+
+#[cfg(test)]
+mod test;
+
+pub use crate::contract::VeritixToken;
