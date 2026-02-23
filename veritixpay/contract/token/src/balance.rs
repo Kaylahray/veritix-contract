@@ -16,6 +16,10 @@ pub fn read_balance(e: &Env, addr: Address) -> i128 {
 
 /// Adds amount to address balance
 pub fn receive_balance(e: &Env, addr: Address, amount: i128) {
+    if crate::freeze::is_frozen(e, &addr) {
+        panic!("account frozen");
+    }
+    
     let key = DataKey::Balance(addr.clone());
     let current_balance = read_balance(e, addr); // TTL is extended here
     let new_balance = current_balance + amount;
