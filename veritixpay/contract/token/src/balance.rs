@@ -17,14 +17,11 @@ pub fn read_balance(e: &Env, addr: Address) -> i128 {
 /// Adds amount to address balance
 pub fn receive_balance(e: &Env, addr: Address, amount: i128) {
     let key = DataKey::Balance(addr.clone());
-    let current_balance = read_balance(e, addr);
+    let current_balance = read_balance(e, addr); // TTL is extended here
     let new_balance = current_balance + amount;
     
-    let storage = e.storage().persistent();
-    storage.set(&key, &new_balance);
-    storage.extend_ttl(&key, BALANCE_LIFETIME_THRESHOLD, BALANCE_BUMP_AMOUNT);
+    e.storage().persistent().set(&key, &new_balance);
 }
-
 /// Subtracts amount from address balance — panics if insufficient
 pub fn spend_balance(e: &Env, addr: Address, amount: i128) {
     let key = DataKey::Balance(addr.clone());
