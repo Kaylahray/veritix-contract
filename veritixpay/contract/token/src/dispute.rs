@@ -1,6 +1,6 @@
 use crate::escrow::{get_escrow, release_escrow, refund_escrow};
 use crate::storage_types::DataKey;
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contracttype, Address, Env, Symbol};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -21,7 +21,6 @@ pub struct DisputeRecord {
 }
 
 /// Opens a dispute against an existing escrow.
-/// Replaces the mock `open_dispute` with Soroban storage and auth.
 pub fn open_dispute(
     e: &Env,
     claimant: Address,
@@ -34,7 +33,7 @@ pub fn open_dispute(
     // 2. Fetch escrow and validate current state
     let escrow = get_escrow(e, escrow_id);
     
-    // Check if the escrow is already finalized (Equivalent to your mock state checks)
+    // Check if the escrow is already finalized
     if escrow.released || escrow.refunded {
         panic!("InvalidState: Cannot open dispute on a settled escrow");
     }
@@ -53,7 +52,7 @@ pub fn open_dispute(
     let record = DisputeRecord {
         id: count,
         escrow_id,
-        claimant,
+        claimant: claimant.clone(),
         resolver,
         status: DisputeStatus::Open,
     };
@@ -61,11 +60,16 @@ pub fn open_dispute(
     // Store in persistent storage as disputes may last longer than instance TTL
     e.storage().persistent().set(&DataKey::Dispute(count), &record);
 
+    // 6. Emit Observability Event
+    e.events().publish(
+        (Symbol::new(e, "dispute"), Symbol::new(e, "opened"), escrow_id),
+        claimant
+    );
+
     count
 }
 
 /// Resolves an open dispute.
-/// Replaces the mock `resolve_dispute` and triggers actual token movement.
 pub fn resolve_dispute(
     e: &Env,
     resolver: Address,
@@ -105,6 +109,12 @@ pub fn resolve_dispute(
 
     // 6. Persist the updated dispute status
     e.storage().persistent().set(&DataKey::Dispute(dispute_id), &dispute);
+
+    // 7. Emit Observability Event
+    e.events().publish(
+        (Symbol::new(e, "dispute"), Symbol::new(e, "resolved"), dispute_id),
+        release_to_beneficiary
+    );
 }
 
 /// Helper to read a dispute record

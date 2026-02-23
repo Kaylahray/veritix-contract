@@ -8,6 +8,7 @@ pub mod admin;
 pub mod metadata;
 pub mod allowance;
 pub mod balance;
+pub mod freeze;
 
 mod contract;
 

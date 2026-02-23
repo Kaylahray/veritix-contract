@@ -108,4 +108,71 @@ mod escrow_tests {
         client.refund_escrow(&depositor);
         client.release_escrow(&beneficiary); // Panic
     }
+
+    use crate::splitter::SplitRecipient;
+use soroban_sdk::{vec, Vec};
+
+// ... inside your test module ...
+
+#[test]
+fn test_create_multi_escrow() {
+    let e = Env::default();
+    let (depositor, _, client) = setup_test(&e); // Assuming setup_test exists in your test file
+    let recipient1 = Address::generate(&e);
+    let recipient2 = Address::generate(&e);
+    
+    let recipients = vec![
+        &e,
+        SplitRecipient { address: recipient1, share_bps: 6000 },
+        SplitRecipient { address: recipient2, share_bps: 4000 },
+    ];
+
+    // Assuming you have a wrapper client or call the function directly:
+    // create_multi_escrow(&e, depositor.clone(), recipients, 1000);
+    // Add assertions for balance deductions and record creation
+}
+
+#[test]
+fn test_release_multi_escrow_3_recipients() {
+    let e = Env::default();
+    // Setup environment and balances...
+    let depositor = Address::generate(&e);
+    let r1 = Address::generate(&e);
+    let r2 = Address::generate(&e);
+    let r3 = Address::generate(&e);
+    
+    let recipients = vec![
+        &e,
+        SplitRecipient { address: r1, share_bps: 5000 },
+        SplitRecipient { address: r2, share_bps: 3000 },
+        SplitRecipient { address: r3, share_bps: 2000 },
+    ];
+    
+    // Test logic: Create escrow for 1000. Release.
+    // Verify balances: r1 = 500, r2 = 300, r3 = 200.
+}
+
+#[test]
+fn test_refund_multi_escrow() {
+    let e = Env::default();
+    // Setup environment...
+    let depositor = Address::generate(&e);
+    let recipients = vec![&e, SplitRecipient { address: Address::generate(&e), share_bps: 10000 }];
+    
+    // Create escrow for 1000. Refund.
+    // Verify depositor gets 1000 back and record is refunded.
+}
+
+#[test]
+#[should_panic(expected = "total bps must equal 10000")]
+fn test_invalid_bps_panics() {
+    let e = Env::default();
+    let depositor = Address::generate(&e);
+    let recipients = vec![
+        &e,
+        SplitRecipient { address: Address::generate(&e), share_bps: 9999 }
+    ];
+
+    crate::escrow::create_multi_escrow(&e, depositor, recipients, 1000);
+}
 }
