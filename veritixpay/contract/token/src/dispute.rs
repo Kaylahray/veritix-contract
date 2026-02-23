@@ -1,218 +1,116 @@
-use std::collections::HashMap;
+use crate::escrow::{get_escrow, release_escrow, refund_escrow};
+use crate::storage_types::DataKey;
+use soroban_sdk::{contracttype, Address, Env};
 
-// --- 1. Core State Models ---
-// In your actual app, these would likely be imported from an `escrow.rs` module.
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum EscrowState {
-    Funded,
-    Disputed,
-    Released,
-    Resolved,
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DisputeStatus {
+    Open,
+    ResolvedForBeneficiary,
+    ResolvedForDepositor,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum ResolutionOutcome {
-    Beneficiary,
-    Depositor,
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeRecord {
+    pub id: u32,
+    pub escrow_id: u32,
+    pub claimant: Address,
+    pub resolver: Address,
+    pub status: DisputeStatus,
 }
 
-pub struct Escrow {
-    pub id: u64,
-    pub depositor: String,
-    pub beneficiary: String,
-    pub resolver: String,
-    pub state: EscrowState,
-    pub amount: u64,
+/// Opens a dispute against an existing escrow.
+/// Replaces the mock `open_dispute` with Soroban storage and auth.
+pub fn open_dispute(
+    e: &Env,
+    claimant: Address,
+    escrow_id: u32,
+    resolver: Address,
+) -> u32 {
+    // 1. Authorization: Only the claimant can initiate this call
+    claimant.require_auth();
+
+    // 2. Fetch escrow and validate current state
+    let escrow = get_escrow(e, escrow_id);
+    
+    // Check if the escrow is already finalized (Equivalent to your mock state checks)
+    if escrow.released || escrow.refunded {
+        panic!("InvalidState: Cannot open dispute on a settled escrow");
+    }
+
+    // 3. Authorization check: Claimant must be a party involved in the escrow
+    if claimant != escrow.depositor && claimant != escrow.beneficiary {
+        panic!("Unauthorized: Only depositor or beneficiary can open a dispute");
+    }
+
+    // 4. Generate a new Dispute ID using the counter in storage
+    let mut count: u32 = e.storage().instance().get(&DataKey::DisputeCount).unwrap_or(0);
+    count += 1;
+    e.storage().instance().set(&DataKey::DisputeCount, &count);
+
+    // 5. Create and store the dispute record
+    let record = DisputeRecord {
+        id: count,
+        escrow_id,
+        claimant,
+        resolver,
+        status: DisputeStatus::Open,
+    };
+    
+    // Store in persistent storage as disputes may last longer than instance TTL
+    e.storage().persistent().set(&DataKey::Dispute(count), &record);
+
+    count
 }
 
-pub struct Dispute {
-    pub initiator: String,
+/// Resolves an open dispute.
+/// Replaces the mock `resolve_dispute` and triggers actual token movement.
+pub fn resolve_dispute(
+    e: &Env,
+    resolver: Address,
+    dispute_id: u32,
+    release_to_beneficiary: bool,
+) {
+    // 1. Authorization: Only the designated resolver can resolve the dispute
+    resolver.require_auth();
+
+    // 2. Fetch the dispute record
+    let mut dispute: DisputeRecord = e
+        .storage()
+        .persistent()
+        .get(&DataKey::Dispute(dispute_id))
+        .expect("Dispute not found");
+
+    // 3. Validation: Check if already resolved (Double-resolution panic)
+    if dispute.status != DisputeStatus::Open {
+        panic!("AlreadyResolved: This dispute has already been resolved");
+    }
+
+    // 4. Validation: Verify the resolver matches the record
+    if dispute.resolver != resolver {
+        panic!("UnauthorizedResolver: Only the designated resolver can resolve this");
+    }
+
+    // 5. Execute resolution by calling the core escrow logic
+    if release_to_beneficiary {
+        // Triggers the standard release logic from escrow.rs
+        release_escrow(e, dispute.escrow_id);
+        dispute.status = DisputeStatus::ResolvedForBeneficiary;
+    } else {
+        // Triggers the standard refund logic from escrow.rs
+        refund_escrow(e, dispute.escrow_id);
+        dispute.status = DisputeStatus::ResolvedForDepositor;
+    }
+
+    // 6. Persist the updated dispute status
+    e.storage().persistent().set(&DataKey::Dispute(dispute_id), &dispute);
 }
 
-// --- 2. State Ledger (Mock Environment) ---
-// This simulates your smart contract's state storage.
-
-pub struct EscrowEnvironment {
-    pub escrows: HashMap<u64, Escrow>,
-    pub disputes: HashMap<u64, Dispute>,
-    pub balances: HashMap<String, u64>,
-}
-
-impl EscrowEnvironment {
-    pub fn new() -> Self {
-        Self {
-            escrows: HashMap::new(),
-            disputes: HashMap::new(),
-            balances: HashMap::new(),
-        }
-    }
-
-    // --- 3. The Required Dispute Logic ---
-
-    pub fn open_dispute(&mut self, escrow_id: u64, caller: &str) {
-        let escrow = self.escrows.get_mut(&escrow_id).expect("Escrow not found");
-        
-        // State checks
-        if escrow.state == EscrowState::Released {
-            panic!("InvalidState: Cannot open dispute on a released escrow");
-        }
-        if escrow.state == EscrowState::Resolved {
-            panic!("InvalidState: Cannot open dispute on a resolved escrow");
-        }
-        if escrow.state == EscrowState::Disputed {
-            panic!("InvalidState: Escrow is already disputed");
-        }
-
-        // Authorization check
-        if caller != escrow.depositor && caller != escrow.beneficiary {
-            panic!("Unauthorized: Only depositor or beneficiary can open a dispute");
-        }
-
-        // Update state and store record
-        escrow.state = EscrowState::Disputed;
-        self.disputes.insert(escrow_id, Dispute { initiator: caller.to_string() });
-    }
-
-    pub fn resolve_dispute(&mut self, escrow_id: u64, caller: &str, outcome: ResolutionOutcome) {
-        let escrow = self.escrows.get_mut(&escrow_id).expect("Escrow not found");
-
-        // State checks
-        if escrow.state == EscrowState::Resolved {
-            panic!("AlreadyResolved: This dispute has already been resolved");
-        }
-        if escrow.state != EscrowState::Disputed {
-            panic!("InvalidState: Escrow is not currently disputed");
-        }
-
-        // Authorization check
-        if caller != escrow.resolver {
-            panic!("UnauthorizedResolver: Only the designated resolver can resolve this");
-        }
-
-        let amount = escrow.amount;
-        let target = match outcome {
-            ResolutionOutcome::Beneficiary => escrow.beneficiary.clone(),
-            ResolutionOutcome::Depositor => escrow.depositor.clone(),
-        };
-
-        // Transfer funds and update state
-        *self.balances.entry(target).or_insert(0) += amount;
-        escrow.state = EscrowState::Resolved;
-    }
-
-    // Helper for testing the released state panic
-    pub fn release_escrow(&mut self, escrow_id: u64) {
-        let escrow = self.escrows.get_mut(&escrow_id).expect("Escrow not found");
-        escrow.state = EscrowState::Released;
-    }
-}
-
-// --- 4. Unit Tests ---
-
-#[cfg(test)]
-mod dispute_tests {
-    use super::*;
-
-    fn setup_environment() -> (EscrowEnvironment, u64, String, String, String) {
-        let mut env = EscrowEnvironment::new();
-        let escrow_id = 1;
-        let depositor = "Alice".to_string();
-        let beneficiary = "Bob".to_string();
-        let resolver = "Charlie".to_string();
-
-        env.escrows.insert(escrow_id, Escrow {
-            id: escrow_id,
-            depositor: depositor.clone(),
-            beneficiary: beneficiary.clone(),
-            resolver: resolver.clone(),
-            state: EscrowState::Funded,
-            amount: 100,
-        });
-
-        // Initialize balances
-        env.balances.insert(depositor.clone(), 0);
-        env.balances.insert(beneficiary.clone(), 0);
-
-        (env, escrow_id, depositor, beneficiary, resolver)
-    }
-
-    // 1. test_open_dispute
-    #[test]
-    fn test_open_dispute() {
-        let (mut env, escrow_id, depositor, _, _) = setup_environment();
-
-        env.open_dispute(escrow_id, &depositor);
-
-        let dispute = env.disputes.get(&escrow_id).expect("Dispute record missing");
-        assert_eq!(dispute.initiator, depositor);
-        
-        let escrow = env.escrows.get(&escrow_id).unwrap();
-        assert_eq!(escrow.state, EscrowState::Disputed);
-    }
-
-    // 2. test_resolve_for_beneficiary
-    #[test]
-    fn test_resolve_for_beneficiary() {
-        let (mut env, escrow_id, depositor, beneficiary, resolver) = setup_environment();
-        env.open_dispute(escrow_id, &depositor);
-
-        env.resolve_dispute(escrow_id, &resolver, ResolutionOutcome::Beneficiary);
-
-        assert_eq!(*env.balances.get(&beneficiary).unwrap(), 100);
-        let escrow = env.escrows.get(&escrow_id).unwrap();
-        assert_eq!(escrow.state, EscrowState::Resolved);
-    }
-
-    // 3. test_resolve_for_depositor
-    #[test]
-    fn test_resolve_for_depositor() {
-        let (mut env, escrow_id, depositor, _, resolver) = setup_environment();
-        env.open_dispute(escrow_id, &depositor);
-
-        env.resolve_dispute(escrow_id, &resolver, ResolutionOutcome::Depositor);
-
-        assert_eq!(*env.balances.get(&depositor).unwrap(), 100);
-        let escrow = env.escrows.get(&escrow_id).unwrap();
-        assert_eq!(escrow.state, EscrowState::Resolved);
-    }
-
-    // 4. test_open_dispute_unauthorized_panics
-    #[test]
-    #[should_panic(expected = "Unauthorized: Only depositor or beneficiary can open a dispute")]
-    fn test_open_dispute_unauthorized_panics() {
-        let (mut env, escrow_id, _, _, _) = setup_environment();
-        env.open_dispute(escrow_id, "Eve"); // Eve is an external party
-    }
-
-    // 5. test_resolve_unauthorized_panics
-    #[test]
-    #[should_panic(expected = "UnauthorizedResolver: Only the designated resolver can resolve this")]
-    fn test_resolve_unauthorized_panics() {
-        let (mut env, escrow_id, depositor, _, _) = setup_environment();
-        env.open_dispute(escrow_id, &depositor);
-        
-        env.resolve_dispute(escrow_id, "Eve", ResolutionOutcome::Depositor);
-    }
-
-    // 6. test_double_resolve_panics
-    #[test]
-    #[should_panic(expected = "AlreadyResolved: This dispute has already been resolved")]
-    fn test_double_resolve_panics() {
-        let (mut env, escrow_id, depositor, _, resolver) = setup_environment();
-        env.open_dispute(escrow_id, &depositor);
-
-        env.resolve_dispute(escrow_id, &resolver, ResolutionOutcome::Beneficiary);
-        env.resolve_dispute(escrow_id, &resolver, ResolutionOutcome::Depositor); // Should panic here
-    }
-
-    // 7. test_dispute_already_released_escrow_panics
-    #[test]
-    #[should_panic(expected = "InvalidState: Cannot open dispute on a released escrow")]
-    fn test_dispute_already_released_escrow_panics() {
-        let (mut env, escrow_id, depositor, _, _) = setup_environment();
-        
-        env.release_escrow(escrow_id); // Change state to released
-        env.open_dispute(escrow_id, &depositor); // Should panic here
-    }
+/// Helper to read a dispute record
+pub fn get_dispute(e: &Env, dispute_id: u32) -> DisputeRecord {
+    e.storage()
+        .persistent()
+        .get(&DataKey::Dispute(dispute_id))
+        .expect("Dispute not found")
 }

@@ -21,3 +21,13 @@ pub fn check_admin(e: &Env, admin: &Address) {
         panic!("not authorized: caller is not the admin");
     }
 }
+
+
+pub fn transfer_admin(e: &Env, new_admin: Address) {
+    // 1. Verify that the current admin is authorizing this call
+    let current_admin = read_admin(e);
+    current_admin.require_auth();
+
+    // 2. Write the new admin to persistent storage
+    write_admin(e, &new_admin);
+}

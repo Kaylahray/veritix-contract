@@ -82,4 +82,8 @@ impl VeritixToken {
     pub fn symbol(e: Env) -> String {
         read_symbol(&e)
     }
+
+pub fn set_admin(e: Env, new_admin: Address) {
+    crate::admin::transfer_admin(&e, new_admin);
+}
 }
