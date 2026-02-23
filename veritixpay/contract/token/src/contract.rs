@@ -154,6 +154,37 @@ impl VeritixToken {
         e.events().publish((symbol_short!("approve"), from, spender), amount);
     }
 
+    pub fn mint(e: Env, to: Address, amount: i128) {
+        check_admin(&e);
+        receive_balance(&e, to.clone(), amount);
+        increase_supply(&e, amount); // Update global supply
+        e.events().publish((symbol_short!("mint"), to), amount);
+    }
+
+    pub fn burn(e: Env, from: Address, amount: i128) {
+        from.require_auth();
+        spend_balance(&e, from.clone(), amount);
+        decrease_supply(&e, amount); // Update global supply
+        e.events().publish((symbol_short!("burn"), from), amount);
+    }
+
+    pub fn burn_from(e: Env, spender: Address, from: Address, amount: i128) {
+        spender.require_auth();
+        let allowance = read_allowance(&e, from.clone(), spender.clone());
+        if allowance < amount {
+            panic!("insufficient allowance");
+        }
+        write_allowance(&e, from.clone(), spender, allowance - amount, e.ledger().sequence() + 100);
+        spend_balance(&e, from.clone(), amount);
+        decrease_supply(&e, amount); // Update global supply
+        e.events().publish((symbol_short!("burn"), from), amount);
+    }
+
+    // --- NEW PUBLIC FUNCTION ---
+    pub fn total_supply(e: Env) -> i128 {
+        read_total_supply(&e)
+    }
+
     // --- Read-Only Functions ---
 
     pub fn balance(e: Env, id: Address) -> i128 {
