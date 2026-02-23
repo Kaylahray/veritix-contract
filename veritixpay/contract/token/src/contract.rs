@@ -4,12 +4,64 @@ use crate::balance::{read_balance, receive_balance, spend_balance};
 use crate::metadata::{read_decimal, read_name, read_symbol, write_metadata};
 use crate::storage_types::DataKey;
 use soroban_sdk::{contract, contractimpl, Address, Env, String};
+use crate::freeze::{freeze_account, is_frozen, unfreeze_account};
 
 #[contract]
 pub struct VeritixToken;
 
 #[contractimpl]
 impl VeritixToken {
+
+    // --- NEW ADMIN FUNCTIONS ---
+    
+    pub fn freeze(e: Env, target: Address) {
+        crate::admin::check_admin(&e);
+        let admin = crate::admin::read_admin(&e);
+        freeze_account(&e, admin, target);
+    }
+
+    pub fn unfreeze(e: Env, target: Address) {
+        crate::admin::check_admin(&e);
+        let admin = crate::admin::read_admin(&e);
+        unfreeze_account(&e, admin, target);
+    }
+
+    // --- UPDATED TOKEN FUNCTIONS ---
+
+    pub fn burn(e: Env, from: Address, amount: i128) {
+        if is_frozen(&e, &from) {
+            panic!("account frozen");
+        }
+        from.require_auth();
+        spend_balance(&e, from.clone(), amount);
+        e.events().publish((symbol_short!("burn"), from), amount);
+    }
+
+    pub fn transfer(e: Env, from: Address, to: Address, amount: i128) {
+        if is_frozen(&e, &from) {
+            panic!("account frozen");
+        }
+        from.require_auth();
+        spend_balance(&e, from.clone(), amount);
+        receive_balance(&e, to.clone(), amount);
+        e.events().publish((symbol_short!("transfer"), from, to), amount);
+    }
+
+    pub fn transfer_from(e: Env, spender: Address, from: Address, to: Address, amount: i128) {
+        if is_frozen(&e, &from) {
+            panic!("account frozen");
+        }
+        spender.require_auth();
+        let allowance = read_allowance(&e, from.clone(), spender.clone());
+        if allowance < amount {
+            panic!("insufficient allowance");
+        }
+        write_allowance(&e, from.clone(), spender, allowance - amount, e.ledger().sequence() + 100);
+        spend_balance(&e, from.clone(), amount);
+        receive_balance(&e, to.clone(), amount);
+        e.events().publish((symbol_short!("transfer"), from, to), amount);
+    }
+
     pub fn initialize(e: Env, admin: Address, decimal: u32, name: String, symbol: String) {
         if has_admin(&e) {
             panic!("already initialized");
