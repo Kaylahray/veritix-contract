@@ -1,6 +1,6 @@
 use crate::balance::{receive_balance, spend_balance};
 use crate::storage_types::DataKey;
-use soroban_sdk::{contracttype, Address, Env, Vec};
+use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,6 +98,12 @@ pub fn distribute(e: &Env, caller: Address, split_id: u32) {
     // 3. Mark distributed
     record.distributed = true;
     e.storage().persistent().set(&DataKey::Split(split_id), &record);
+
+    // 4. Emit Observability Event
+    e.events().publish(
+        (Symbol::new(e, "split"), Symbol::new(e, "distributed"), split_id),
+        record.total_amount
+    );
 }
 
 pub fn get_split(e: &Env, split_id: u32) -> SplitRecord {

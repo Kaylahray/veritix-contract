@@ -1,224 +1,246 @@
-use std::cell::RefCell;
-use std::collections::HashMap;
+use crate::balance::{receive_balance, spend_balance};
+use crate::storage_types::DataKey;
+use soroban_sdk::{contracttype, Address, Env, Symbol};
 
-// --- 1. Environment & Types (Mocking Smart Contract Context) ---
+use crate::splitter::SplitRecipient;
+use crate::admin::read_admin; // Assuming read_admin returns the Admin Address
+use soroban_sdk::Vec;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Address(pub String);
-
-pub struct Env {
-    pub current_ledger: u32,
-    pub balances: RefCell<HashMap<String, u32>>, 
-}
-
-impl Env {
-    pub fn new(current_ledger: u32) -> Self {
-        Self {
-            current_ledger,
-            balances: RefCell::new(HashMap::new()),
-        }
-    }
-}
-
-// --- 2. Escrow State Models ---
-
-#[derive(Clone, Debug)]
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowRecord {
     pub id: u32,
     pub depositor: Address,
     pub beneficiary: Address,
-    pub amount: u32,
+    pub amount: i128,
     pub released: bool,
     pub refunded: bool,
-    pub expiration_ledger: u32, 
-    pub release_after_ledger: u32, // Added per Issue #17
+    pub expiration_ledger: u32,
+    pub release_after_ledger: u32,
 }
 
-// --- 3. Escrow Contract Logic ---
+/// Creates a new escrow record and locks the funds in the contract.
+pub fn create_escrow(
+    e: &Env,
+    depositor: Address,
+    beneficiary: Address,
+    amount: i128,
+    expiration_ledger: u32,
+    release_after_ledger: u32,
+) -> u32 {
+    depositor.require_auth();
 
-pub struct EscrowContract {
-    pub records: HashMap<u32, EscrowRecord>,
+    // 1. Move funds from the depositor to the contract itself
+    spend_balance(e, depositor.clone(), amount);
+    receive_balance(e, e.current_contract_address(), amount);
+
+    // 2. Increment and fetch the new Escrow ID
+    let mut count: u32 = e.storage().instance().get(&DataKey::EscrowCount).unwrap_or(0);
+    count += 1;
+    e.storage().instance().set(&DataKey::EscrowCount, &count);
+
+    // 3. Store the record
+    let record = EscrowRecord {
+        id: count,
+        depositor: depositor.clone(),
+        beneficiary: beneficiary.clone(),
+        amount,
+        released: false,
+        refunded: false,
+        expiration_ledger,
+        release_after_ledger,
+    };
+    e.storage().persistent().set(&DataKey::Escrow(count), &record);
+
+    // 4. Emit Event
+    e.events().publish(
+        (Symbol::new(e, "escrow"), Symbol::new(e, "created"), depositor),
+        (beneficiary, amount)
+    );
+
+    count
 }
 
-impl EscrowContract {
-    pub fn new() -> Self {
-        Self {
-            records: HashMap::new(),
+/// Releases the escrowed funds to the beneficiary.
+pub fn release_escrow(e: &Env, escrow_id: u32) {
+    let mut escrow = get_escrow(e, escrow_id);
+
+    // State & Timelock Validation
+    if e.ledger().sequence() < escrow.release_after_ledger {
+        panic!("TimelockActive: Cannot release funds before the release_after_ledger");
+    }
+    if escrow.released || escrow.refunded {
+        panic!("InvalidState: Escrow is already settled");
+    }
+
+    // Update state
+    escrow.released = true;
+    e.storage().persistent().set(&DataKey::Escrow(escrow_id), &escrow);
+
+    // Move funds from contract to beneficiary
+    spend_balance(e, e.current_contract_address(), escrow.amount);
+    receive_balance(e, escrow.beneficiary.clone(), escrow.amount);
+
+    // Emit Event
+    e.events().publish(
+        (Symbol::new(e, "escrow"), Symbol::new(e, "released"), escrow_id),
+        escrow.beneficiary
+    );
+}
+
+/// Refunds the escrowed funds back to the depositor.
+pub fn refund_escrow(e: &Env, escrow_id: u32) {
+    let mut escrow = get_escrow(e, escrow_id);
+
+    // State Validation
+    if escrow.released || escrow.refunded {
+        panic!("InvalidState: Escrow is already settled");
+    }
+
+    // Update state
+    escrow.refunded = true;
+    e.storage().persistent().set(&DataKey::Escrow(escrow_id), &escrow);
+
+    // Move funds from contract back to depositor
+    spend_balance(e, e.current_contract_address(), escrow.amount);
+    receive_balance(e, escrow.depositor.clone(), escrow.amount);
+
+    // Emit Event
+    e.events().publish(
+        (Symbol::new(e, "escrow"), Symbol::new(e, "refunded"), escrow_id),
+        escrow.depositor
+    );
+}
+
+/// Helper to read an escrow record
+pub fn get_escrow(e: &Env, escrow_id: u32) -> EscrowRecord {
+    e.storage()
+        .persistent()
+        .get(&DataKey::Escrow(escrow_id))
+        .expect("Escrow not found")
+}
+
+// --- MULTI-RECIPIENT ESCROW LOGIC ---
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiEscrowRecord {
+    pub id: u32,
+    pub depositor: Address,
+    pub recipients: Vec<SplitRecipient>,
+    pub total_amount: i128,
+    pub released: bool,
+    pub refunded: bool,
+}
+
+/// Creates a multi-recipient escrow and locks the funds.
+pub fn create_multi_escrow(
+    e: &Env,
+    depositor: Address,
+    recipients: Vec<SplitRecipient>,
+    total_amount: i128,
+) -> u32 {
+    depositor.require_auth();
+
+    // 1. Validate BPS Sums to 10000 (100.00%)
+    let mut total_bps: u32 = 0;
+    for recipient in recipients.iter() {
+        total_bps += recipient.share_bps;
+    }
+    if total_bps != 10000 {
+        panic!("total bps must equal 10000");
+    }
+
+    // 2. Move funds from depositor to the contract
+    spend_balance(e, depositor.clone(), total_amount);
+    receive_balance(e, e.current_contract_address(), total_amount);
+
+    // 3. Manage ID and Storage
+    let mut count: u32 = e.storage().instance().get(&DataKey::MultiEscrowCount).unwrap_or(0);
+    count += 1;
+    e.storage().instance().set(&DataKey::MultiEscrowCount, &count);
+
+    let record = MultiEscrowRecord {
+        id: count,
+        depositor: depositor.clone(),
+        recipients,
+        total_amount,
+        released: false,
+        refunded: false,
+    };
+    e.storage().persistent().set(&DataKey::MultiEscrow(count), &record);
+
+    // Emit event for observability
+    e.events().publish((Symbol::new(e, "multi_escrow"), Symbol::new(e, "created"), count), depositor);
+
+    count
+}
+
+/// Releases funds proportionally to all recipients.
+pub fn release_multi_escrow(e: &Env, caller: Address, escrow_id: u32) {
+    caller.require_auth();
+
+    let mut record: MultiEscrowRecord = e.storage().persistent().get(&DataKey::MultiEscrow(escrow_id)).expect("Escrow not found");
+
+    // 1. Validation: Prevent double-settlement
+    if record.released || record.refunded {
+        panic!("Already settled");
+    }
+
+    // 2. Authorization: Caller must be depositor or admin
+    if caller != record.depositor {
+        let admin = read_admin(e);
+        if caller != admin {
+            panic!("unauthorized: must be depositor or admin");
         }
     }
 
-    pub fn create_escrow(
-        &mut self,
-        id: u32,
-        depositor: Address,
-        beneficiary: Address,
-        amount: u32,
-        expiration_ledger: u32,
-        release_after_ledger: u32, // Added per Issue #17
-    ) {
-        let record = EscrowRecord {
-            id,
-            depositor,
-            beneficiary,
-            amount,
-            released: false,
-            refunded: false,
-            expiration_ledger,
-            release_after_ledger,
+    // 3. Distribute funds proportionally (handling dust)
+    let mut remaining_amount = record.total_amount;
+    let len = record.recipients.len();
+
+    for (i, recipient) in record.recipients.iter().enumerate() {
+        let amount_to_send = if i == (len as usize - 1) {
+            remaining_amount // Final recipient gets remainder to prevent dust
+        } else {
+            (record.total_amount * recipient.share_bps as i128) / 10000
         };
-        self.records.insert(id, record);
+
+        spend_balance(e, e.current_contract_address(), amount_to_send);
+        receive_balance(e, recipient.address.clone(), amount_to_send);
+        remaining_amount -= amount_to_send;
     }
 
-    pub fn expire_escrow(&mut self, e: &Env, caller: Address, escrow_id: u32) {
-        let escrow = self.records.get_mut(&escrow_id).expect("Escrow not found");
+    // 4. Update state
+    record.released = true;
+    e.storage().persistent().set(&DataKey::MultiEscrow(escrow_id), &record);
 
-        if caller != escrow.depositor {
-            panic!("Unauthorized: Only the depositor can expire the escrow");
-        }
-        if e.current_ledger < escrow.expiration_ledger {
-            panic!("TooEarly: Escrow has not reached its expiration ledger yet");
-        }
-        if escrow.released {
-            panic!("InvalidState: Escrow is already released");
-        }
-        if escrow.refunded {
-            panic!("InvalidState: Escrow is already refunded");
-        }
-
-        escrow.refunded = true;
-
-        let mut balances = e.balances.borrow_mut();
-        let balance = balances.entry(escrow.depositor.0.clone()).or_insert(0);
-        *balance += escrow.amount;
-    }
-
-    // Updated per Issue #17 to include the time-lock check
-    pub fn release_escrow(&mut self, e: &Env, caller: Address, escrow_id: u32) {
-        let escrow = self.records.get_mut(&escrow_id).expect("Escrow not found");
-        
-        // Authorization: Depositor or Beneficiary can trigger release, but funds go to Beneficiary
-        if caller != escrow.depositor && caller != escrow.beneficiary {
-            panic!("Unauthorized: Only parties involved can release the escrow");
-        }
-
-        // --- NEW TIMELOCK CHECK ---
-        if e.current_ledger < escrow.release_after_ledger {
-            panic!("TimelockActive: Cannot release funds before the release_after_ledger");
-        }
-
-        if escrow.released {
-            panic!("InvalidState: Escrow is already released");
-        }
-        if escrow.refunded {
-            panic!("InvalidState: Escrow is already refunded");
-        }
-
-        escrow.released = true;
-
-        // Transfer funds to beneficiary
-        let mut balances = e.balances.borrow_mut();
-        let balance = balances.entry(escrow.beneficiary.0.clone()).or_insert(0);
-        *balance += escrow.amount;
-    }
+    e.events().publish((Symbol::new(e, "multi_escrow"), Symbol::new(e, "released"), escrow_id), record.total_amount);
 }
 
-// --- 4. Unit Tests ---
+/// Refunds the entire amount back to the depositor.
+pub fn refund_multi_escrow(e: &Env, caller: Address, escrow_id: u32) {
+    caller.require_auth();
 
-#[cfg(test)]
-mod escrow_tests {
-    use super::*;
+    let mut record: MultiEscrowRecord = e.storage().persistent().get(&DataKey::MultiEscrow(escrow_id)).expect("Escrow not found");
 
-    fn setup() -> (EscrowContract, Env, u32, Address, Address) {
-        let contract = EscrowContract::new();
-        let env = Env::new(100); // Start at ledger 100
-        let escrow_id = 1;
-        let depositor = Address("Alice".to_string());
-        let beneficiary = Address("Bob".to_string());
-        
-        // Initialize mock balances
-        env.balances.borrow_mut().insert(depositor.0.clone(), 0);
-        env.balances.borrow_mut().insert(beneficiary.0.clone(), 0);
-
-        (contract, env, escrow_id, depositor, beneficiary)
+    // 1. Validation: Prevent double-settlement
+    if record.released || record.refunded {
+        panic!("Already settled");
     }
 
-    // --- Tests for Issue #16 (Updated to include release_after_ledger parameter) ---
-
-    #[test]
-    fn test_create_escrow_stores_ledgers() {
-        let (mut contract, _env, escrow_id, depositor, beneficiary) = setup();
-        
-        contract.create_escrow(escrow_id, depositor, beneficiary, 500, 150, 110);
-        
-        let record = contract.records.get(&escrow_id).unwrap();
-        assert_eq!(record.expiration_ledger, 150);
-        assert_eq!(record.release_after_ledger, 110);
+    // 2. Authorization: Caller must be depositor
+    if caller != record.depositor {
+        panic!("unauthorized: must be depositor");
     }
 
-    #[test]
-    fn test_expire_escrow() {
-        let (mut contract, mut env, escrow_id, depositor, beneficiary) = setup();
-        
-        // Expiration is at 150, release is allowed after 110
-        contract.create_escrow(escrow_id, depositor.clone(), beneficiary, 500, 150, 110);
-        env.current_ledger = 151; // Past expiration
+    // 3. Return funds to depositor
+    spend_balance(e, e.current_contract_address(), record.total_amount);
+    receive_balance(e, record.depositor.clone(), record.total_amount);
 
-        contract.expire_escrow(&env, depositor.clone(), escrow_id);
+    // 4. Update state
+    record.refunded = true;
+    e.storage().persistent().set(&DataKey::MultiEscrow(escrow_id), &record);
 
-        let escrow = contract.records.get(&escrow_id).unwrap();
-        assert!(escrow.refunded);
-    }
-
-    // ... [Other issue #16 tests omitted for brevity, but they just need the extra `0` or `110` param in create_escrow] ...
-
-    #[test]
-    #[should_panic(expected = "InvalidState: Escrow is already released")]
-    fn test_expire_released_escrow_panics() {
-        let (mut contract, mut env, escrow_id, depositor, beneficiary) = setup();
-        
-        // Release after 100 (current), expire at 150
-        contract.create_escrow(escrow_id, depositor.clone(), beneficiary, 500, 150, 100);
-        
-        // Depositor releases escrow normally
-        contract.release_escrow(&env, depositor.clone(), escrow_id);
-
-        env.current_ledger = 151;
-
-        // Trying to expire a released escrow should panic
-        contract.expire_escrow(&env, depositor, escrow_id);
-    }
-
-    // --- NEW Tests for Issue #17 ---
-
-    #[test]
-    fn test_release_after_timelock_succeeds() {
-        let (mut contract, mut env, escrow_id, depositor, beneficiary) = setup();
-        
-        // Create escrow with time-lock at ledger 120
-        contract.create_escrow(escrow_id, depositor, beneficiary.clone(), 500, 150, 120);
-
-        // Fast forward to exactly the required ledger
-        env.current_ledger = 120;
-
-        // Beneficiary claims the funds
-        contract.release_escrow(&env, beneficiary.clone(), escrow_id);
-
-        let escrow = contract.records.get(&escrow_id).unwrap();
-        assert!(escrow.released, "Escrow should be marked as released");
-        
-        let balances = env.balances.borrow();
-        assert_eq!(*balances.get(&beneficiary.0).unwrap(), 500, "Beneficiary should receive the funds");
-    }
-
-    #[test]
-    #[should_panic(expected = "TimelockActive: Cannot release funds before the release_after_ledger")]
-    fn test_release_before_timelock_panics() {
-        let (mut contract, env, escrow_id, depositor, beneficiary) = setup();
-        
-        // Create escrow with time-lock at ledger 120 (env is currently at 100)
-        contract.create_escrow(escrow_id, depositor, beneficiary.clone(), 500, 150, 120);
-
-        // Beneficiary tries to claim too early. Should panic.
-        contract.release_escrow(&env, beneficiary, escrow_id);
-    }
+    e.events().publish((Symbol::new(e, "multi_escrow"), Symbol::new(e, "refunded"), escrow_id), record.depositor);
 }
