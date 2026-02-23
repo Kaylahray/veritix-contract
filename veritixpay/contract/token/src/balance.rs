@@ -16,6 +16,10 @@ pub fn read_balance(e: &Env, addr: Address) -> i128 {
 
 /// Adds amount to address balance
 pub fn receive_balance(e: &Env, addr: Address, amount: i128) {
+    if crate::freeze::is_frozen(e, &addr) {
+        panic!("account frozen");
+    }
+    
     let key = DataKey::Balance(addr.clone());
     let current_balance = read_balance(e, addr); // TTL is extended here
     let new_balance = current_balance + amount;
@@ -36,4 +40,24 @@ pub fn spend_balance(e: &Env, addr: Address, amount: i128) {
     let storage = e.storage().persistent();
     storage.set(&key, &new_balance);
     storage.extend_ttl(&key, BALANCE_LIFETIME_THRESHOLD, BALANCE_BUMP_AMOUNT);
+}
+
+// In veritixpay/contract/token/src/balance.rs
+// (Make sure to import DataKey if not already imported)
+
+pub fn read_total_supply(e: &Env) -> i128 {
+    e.storage().instance().get(&DataKey::TotalSupply).unwrap_or(0)
+}
+
+pub fn increase_supply(e: &Env, amount: i128) {
+    let supply = read_total_supply(e);
+    e.storage().instance().set(&DataKey::TotalSupply, &(supply + amount));
+}
+
+pub fn decrease_supply(e: &Env, amount: i128) {
+    let supply = read_total_supply(e);
+    if supply < amount {
+        panic!("supply cannot be negative");
+    }
+    e.storage().instance().set(&DataKey::TotalSupply, &(supply - amount));
 }

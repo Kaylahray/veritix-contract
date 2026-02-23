@@ -1,0 +1,45 @@
+name: Veritix Pay CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    name: Build, Test, and Format
+    runs-on: ubuntu-latest
+    
+    # Set the working directory for all run steps in this job
+    defaults:
+      run:
+        working-directory: veritixpay/contract/token
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt
+
+      - name: Cache Cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "veritixpay/contract/token -> target"
+
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli
+
+      - name: Check Formatting
+        # Uses cargo fmt directly, or make fmt if it passes the args in your Makefile
+        run: cargo fmt -- --check
+
+      - name: Build Contract
+        run: make build
+
+      - name: Run Tests
+        run: make test
